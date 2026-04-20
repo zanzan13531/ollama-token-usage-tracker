@@ -76,6 +76,7 @@
   <button class="active" data-period="daily">Daily</button>
   <button data-period="weekly">Weekly</button>
   <button data-period="monthly">Monthly</button>
+  <button data-period="lifetime">Lifetime</button>
 </div>
 
 <div class="cards">
@@ -108,6 +109,11 @@
   </div>
 </div>
 
+<div class="chart-box" style="margin-bottom: 24px;">
+  <h3>Usage Trend</h3>
+  <canvas id="trendChart"></canvas>
+</div>
+
 <div class="table-box">
   <h3 id="tableTitle">Daily Breakdown</h3>
   <table>
@@ -128,7 +134,7 @@
 const $ = id => document.getElementById(id);
 const fmt = n => n != null ? n.toLocaleString() : '—';
 
-let tokenChart, modelChart;
+let tokenChart, modelChart, trendChart;
 let currentPeriod = 'daily';
 
 const CHART_COLORS = ['#58a6ff','#3fb950','#d29922','#bc8cff','#f778ba','#ff7b72','#79c0ff','#d2a8ff'];
@@ -232,8 +238,32 @@ async function loadTimeSeries() {
     }
   });
 
+  // Line chart
+  if (trendChart) trendChart.destroy();
+  trendChart = new Chart($('trendChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Input Tokens', data: input, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', tension: 0.3, fill: true, pointRadius: 3, pointBackgroundColor: '#3fb950' },
+        { label: 'Output Tokens', data: output, borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.1)', tension: 0.3, fill: true, pointRadius: 3, pointBackgroundColor: '#d29922' },
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+        y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+      },
+      plugins: {
+        legend: { labels: { color: '#8b949e' } }
+      }
+    }
+  });
+
   // Table
-  const periodLabels = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
+  const periodLabels = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', lifetime: 'Lifetime' };
   $('tableTitle').textContent = `${periodLabels[currentPeriod]} Breakdown`;
   const tbody = $('statsBody');
   tbody.innerHTML = '';

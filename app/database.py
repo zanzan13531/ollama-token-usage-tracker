@@ -156,14 +156,14 @@ async def query_stats(
 
 async def query_time_stats(
     bucket: str,
-    lookback: str,
+    lookback: str | None = None,
     model: str | None = None,
     device: str | None = None,
 ) -> list[dict[str, Any]]:
     """Query stats grouped by time bucket.
 
     bucket: SQLite strftime format, e.g. '%Y-%m-%d' for daily
-    lookback: SQLite date modifier, e.g. '-30 days'
+    lookback: SQLite date modifier, e.g. '-30 days'. None = all time.
     """
     async with aiosqlite.connect(_db_path()) as db:
         db.row_factory = aiosqlite.Row
@@ -178,6 +178,13 @@ async def query_time_stats(
             extra_params.append(device)
         filter_sql = " ".join(extra_filters)
 
+        if lookback is not None:
+            time_clause = "WHERE timestamp >= datetime('now', ?)"
+            time_params: list[Any] = [lookback]
+        else:
+            time_clause = "WHERE 1=1"
+            time_params = []
+
         rows = await db.execute_fetchall(
             f"""
             SELECT
@@ -187,12 +194,12 @@ async def query_time_stats(
                 COALESCE(SUM(eval_count), 0) as output_tokens,
                 COALESCE(AVG(response_latency_ms), 0) as avg_latency_ms
             FROM requests
-            WHERE timestamp >= datetime('now', ?)
+            {time_clause}
                 {filter_sql}
             GROUP BY period
             ORDER BY period DESC
             """,
-            [lookback, *extra_params],
+            [*time_params, *extra_params],
         )
         results = [dict(r) for r in rows]
 

@@ -38,6 +38,14 @@ async def get_monthly_stats(
     return await query_time_stats(bucket="%Y-%m", lookback="-365 days", model=model, device=device)
 
 
+@router.get("/lifetime", response_model=list[TimeBucketStats])
+async def get_lifetime_stats(
+    model: str | None = Query(None),
+    device: str | None = Query(None),
+):
+    return await query_time_stats(bucket="%Y-%m", lookback=None, model=model, device=device)
+
+
 @router.get("/devices")
 async def get_devices():
     devices = await query_devices()
