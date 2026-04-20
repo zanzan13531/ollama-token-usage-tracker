@@ -154,17 +154,35 @@ async def query_stats(
         return summary
 
 
+def _period_expr(bucket: str, bucket_hours: int | None = None) -> str:
+    """Build a SQL expression for the time period grouping.
+
+    When bucket_hours is set, hours are floored to the nearest multiple
+    (e.g. bucket_hours=6 gives 00:00, 06:00, 12:00, 18:00).
+    """
+    if bucket_hours and bucket_hours > 1:
+        return (
+            f"strftime('%Y-%m-%d ', timestamp) || "
+            f"printf('%02d', (CAST(strftime('%H', timestamp) AS INTEGER) / {bucket_hours}) * {bucket_hours}) || ':00'"
+        )
+    return f"strftime('{bucket}', timestamp)"
+
+
 async def query_time_stats(
     bucket: str,
     lookback: str | None = None,
     model: str | None = None,
     device: str | None = None,
+    bucket_hours: int | None = None,
 ) -> list[dict[str, Any]]:
     """Query stats grouped by time bucket.
 
     bucket: SQLite strftime format, e.g. '%Y-%m-%d' for daily
     lookback: SQLite date modifier, e.g. '-30 days'. None = all time.
+    bucket_hours: if set, floor hours to this interval (e.g. 6 for 6-hour blocks).
     """
+    period_sql = _period_expr(bucket, bucket_hours)
+
     async with aiosqlite.connect(_db_path()) as db:
         db.row_factory = aiosqlite.Row
 
@@ -188,7 +206,7 @@ async def query_time_stats(
         rows = await db.execute_fetchall(
             f"""
             SELECT
-                strftime('{bucket}', timestamp) as period,
+                {period_sql} as period,
                 COUNT(*) as requests,
                 COALESCE(SUM(prompt_eval_count), 0) as input_tokens,
                 COALESCE(SUM(eval_count), 0) as output_tokens,
@@ -212,7 +230,7 @@ async def query_time_stats(
                     COALESCE(SUM(prompt_eval_count), 0) as input_tokens,
                     COALESCE(SUM(eval_count), 0) as output_tokens
                 FROM requests
-                WHERE strftime('{bucket}', timestamp) = ?
+                WHERE {period_sql} = ?
                     {filter_sql}
                 GROUP BY model ORDER BY requests DESC
                 """,

@@ -27,7 +27,7 @@ async def get_weekly_stats(
     model: str | None = Query(None),
     device: str | None = Query(None),
 ):
-    return await query_time_stats(bucket="%Y-%m-%d", lookback="-7 days", model=model, device=device)
+    return await query_time_stats(bucket="%Y-%m-%d %H:00", lookback="-7 days", model=model, device=device, bucket_hours=6)
 
 
 @router.get("/monthly", response_model=list[TimeBucketStats])
