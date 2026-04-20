@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ollama Usage Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --text-muted: #8b949e;
+    --accent: #58a6ff; --green: #3fb950; --orange: #d29922; --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+  h1 { font-size: 1.5rem; margin-bottom: 8px; }
+  .subtitle { color: var(--text-muted); font-size: 0.85rem; margin-bottom: 24px; }
+
+  .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 24px; flex-wrap: wrap; }
+  .controls select, .controls button {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    padding: 8px 14px; border-radius: 6px; font-size: 0.85rem; cursor: pointer;
+  }
+  .controls button.active { background: var(--accent); color: #000; border-color: var(--accent); }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px;
+  }
+  .card .label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .card .value { font-size: 1.8rem; font-weight: 700; margin-top: 4px; }
+  .card .value.accent { color: var(--accent); }
+  .card .value.green { color: var(--green); }
+  .card .value.orange { color: var(--orange); }
+  .card .value.purple { color: var(--purple); }
+
+  .charts { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .chart-box {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px;
+  }
+  .chart-box h3 { font-size: 0.9rem; margin-bottom: 12px; color: var(--text-muted); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  tr:hover { background: rgba(88,166,255,0.05); }
+
+  .table-box {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px; overflow-x: auto;
+  }
+  .table-box h3 { font-size: 0.9rem; margin-bottom: 12px; color: var(--text-muted); }
+
+  .num { font-variant-numeric: tabular-nums; }
+
+  @media (max-width: 768px) {
+    .charts { grid-template-columns: 1fr; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Ollama Usage Tracker</h1>
+<p class="subtitle">Token usage analytics across your Ollama cluster</p>
+
+<div class="controls">
+  <select id="deviceFilter">
+    <option value="">All devices</option>
+  </select>
+  <select id="modelFilter">
+    <option value="">All models</option>
+  </select>
+  <button class="active" data-period="daily">Daily</button>
+  <button data-period="weekly">Weekly</button>
+  <button data-period="monthly">Monthly</button>
+</div>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">Total Requests</div>
+    <div class="value accent" id="totalRequests">—</div>
+  </div>
+  <div class="card">
+    <div class="label">Input Tokens</div>
+    <div class="value green" id="totalInput">—</div>
+  </div>
+  <div class="card">
+    <div class="label">Output Tokens</div>
+    <div class="value orange" id="totalOutput">—</div>
+  </div>
+  <div class="card">
+    <div class="label">Avg Latency</div>
+    <div class="value purple" id="avgLatency">—</div>
+  </div>
+</div>
+
+<div class="charts">
+  <div class="chart-box">
+    <h3>Token Usage Over Time</h3>
+    <canvas id="tokenChart"></canvas>
+  </div>
+  <div class="chart-box">
+    <h3>Usage by Model</h3>
+    <canvas id="modelChart"></canvas>
+  </div>
+</div>
+
+<div class="table-box">
+  <h3 id="tableTitle">Daily Breakdown</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>Period</th>
+        <th>Requests</th>
+        <th>Input Tokens</th>
+        <th>Output Tokens</th>
+        <th>Avg Latency</th>
+      </tr>
+    </thead>
+    <tbody id="statsBody"></tbody>
+  </table>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => n != null ? n.toLocaleString() : '—';
+
+let tokenChart, modelChart;
+let currentPeriod = 'daily';
+
+const CHART_COLORS = ['#58a6ff','#3fb950','#d29922','#bc8cff','#f778ba','#ff7b72','#79c0ff','#d2a8ff'];
+
+function getFilterParams() {
+  const parts = [];
+  const model = $('modelFilter').value;
+  const device = $('deviceFilter').value;
+  if (model) parts.push(`model=${encodeURIComponent(model)}`);
+  if (device) parts.push(`device=${encodeURIComponent(device)}`);
+  return parts.length ? '?' + parts.join('&') : '';
+}
+
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  return res.json();
+}
+
+async function loadDevices() {
+  const data = await fetchJSON('/stats/devices');
+  const select = $('deviceFilter');
+  const current = select.value;
+  while (select.options.length > 1) select.remove(1);
+  for (const d of data.devices) {
+    const opt = document.createElement('option');
+    opt.value = d; opt.textContent = d;
+    select.appendChild(opt);
+  }
+  select.value = current;
+}
+
+async function loadStats() {
+  const q = getFilterParams();
+  const stats = await fetchJSON(`/stats${q}`);
+
+  $('totalRequests').textContent = fmt(stats.total_requests);
+  $('totalInput').textContent = fmt(stats.total_input_tokens);
+  $('totalOutput').textContent = fmt(stats.total_output_tokens);
+  $('avgLatency').textContent = stats.avg_latency_ms ? `${stats.avg_latency_ms.toFixed(0)}ms` : '—';
+
+  // Model doughnut
+  if (modelChart) modelChart.destroy();
+  const models = stats.models || [];
+  modelChart = new Chart($('modelChart'), {
+    type: 'doughnut',
+    data: {
+      labels: models.map(m => m.model),
+      datasets: [{
+        data: models.map(m => m.input_tokens + m.output_tokens),
+        backgroundColor: CHART_COLORS.slice(0, models.length),
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#8b949e', font: { size: 11 } } }
+      }
+    }
+  });
+
+  // Populate model filter dropdown (preserve selection)
+  const select = $('modelFilter');
+  const current = select.value;
+  while (select.options.length > 1) select.remove(1);
+  for (const m of models) {
+    const opt = document.createElement('option');
+    opt.value = m.model; opt.textContent = m.model;
+    select.appendChild(opt);
+  }
+  select.value = current;
+}
+
+async function loadTimeSeries() {
+  const q = getFilterParams();
+  const data = await fetchJSON(`/stats/${currentPeriod}${q}`);
+
+  const labels = data.map(d => d.period).reverse();
+  const input = data.map(d => d.input_tokens).reverse();
+  const output = data.map(d => d.output_tokens).reverse();
+
+  if (tokenChart) tokenChart.destroy();
+  tokenChart = new Chart($('tokenChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Input Tokens', data: input, backgroundColor: '#3fb950', stack: 'tokens' },
+        { label: 'Output Tokens', data: output, backgroundColor: '#d29922', stack: 'tokens' },
+      ]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        x: { stacked: true, ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+        y: { stacked: true, ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+      },
+      plugins: {
+        legend: { labels: { color: '#8b949e' } }
+      }
+    }
+  });
+
+  // Table
+  const periodLabels = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' };
+  $('tableTitle').textContent = `${periodLabels[currentPeriod]} Breakdown`;
+  const tbody = $('statsBody');
+  tbody.innerHTML = '';
+  for (const row of data) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${row.period}</td>
+      <td class="num">${fmt(row.requests)}</td>
+      <td class="num">${fmt(row.input_tokens)}</td>
+      <td class="num">${fmt(row.output_tokens)}</td>
+      <td class="num">${row.avg_latency_ms ? row.avg_latency_ms.toFixed(0) + 'ms' : '—'}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+async function refresh() {
+  await Promise.all([loadDevices(), loadStats(), loadTimeSeries()]);
+}
+
+// Period buttons
+document.querySelectorAll('[data-period]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-period]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentPeriod = btn.dataset.period;
+    loadTimeSeries();
+  });
+});
+
+// Filters
+$('modelFilter').addEventListener('change', refresh);
+$('deviceFilter').addEventListener('change', refresh);
+
+// Initial load
+refresh();
+
+// Auto-refresh every 30 seconds
+setInterval(refresh, 30000);
+</script>
+
+</body>
+</html>
