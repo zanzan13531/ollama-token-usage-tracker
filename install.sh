@@ -81,11 +81,12 @@ echo "Setting up auto-start..."
 
 if [ "$OS" = "Darwin" ]; then
     # macOS: launchd
+    mkdir -p "$HOME/Library/LaunchAgents"
+
+    # -- Proxy/Tracker service --
     PLIST_NAME="com.ollama-tracker"
     PLIST_SRC="$PROJECT_DIR/$PLIST_NAME.plist"
     PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
-
-    mkdir -p "$HOME/Library/LaunchAgents"
 
     if launchctl list | grep -q "$PLIST_NAME" 2>/dev/null; then
         launchctl unload "$PLIST_DST" 2>/dev/null || true
@@ -97,6 +98,36 @@ if [ "$OS" = "Darwin" ]; then
 
     launchctl load "$PLIST_DST"
     echo "Loaded $PLIST_NAME into launchd"
+
+    # -- Move Ollama to port 11435 (proxy mode only) --
+    if [ "$MODE" = "proxy" ]; then
+        OLLAMA_PLIST_NAME="com.ollama.serve.custom"
+        OLLAMA_PLIST_SRC="$PROJECT_DIR/com.ollama.serve.plist"
+        OLLAMA_PLIST_DST="$HOME/Library/LaunchAgents/$OLLAMA_PLIST_NAME.plist"
+        OLLAMA_BIN="$(which ollama 2>/dev/null || echo "/usr/local/bin/ollama")"
+
+        echo ""
+        echo "Setting up Ollama to run on port 11435..."
+
+        # Disable the Ollama desktop app's auto-start services
+        launchctl remove com.ollama.serve 2>/dev/null || true
+        launchctl remove com.ollama.server 2>/dev/null || true
+        launchctl remove com.ollama.ollama 2>/dev/null || true
+
+        if launchctl list | grep -q "$OLLAMA_PLIST_NAME" 2>/dev/null; then
+            launchctl unload "$OLLAMA_PLIST_DST" 2>/dev/null || true
+        fi
+
+        # Kill any existing ollama processes (careful not to kill the proxy)
+        killall ollama 2>/dev/null || true
+        sleep 2
+
+        sed -e "s|__OLLAMA_BIN__|$OLLAMA_BIN|g" \
+            "$OLLAMA_PLIST_SRC" > "$OLLAMA_PLIST_DST"
+
+        launchctl load "$OLLAMA_PLIST_DST"
+        echo "Loaded Ollama on port 11435 via launchd"
+    fi
 
 elif [ "$OS" = "Linux" ]; then
     # Linux: systemd
@@ -134,14 +165,16 @@ echo "Mode: $MODE | Device: $DEVICE_NAME"
 echo ""
 
 if [ "$MODE" = "proxy" ]; then
-    echo "IMPORTANT: Move Ollama to port 11435 so the proxy can take over 11434:"
     if [ "$OS" = "Darwin" ]; then
-        echo "  launchctl setenv OLLAMA_HOST '127.0.0.1:11435'"
+        echo "Ollama has been moved to port 11435 automatically."
+        echo "NOTE: Do not use the Ollama desktop app — it will fight for port 11434."
+        echo "      Ollama is now managed via launchd (com.ollama.serve.custom)."
     else
-        echo "  Edit /etc/systemd/system/ollama.service and set Environment=\"OLLAMA_HOST=127.0.0.1:11435\""
+        echo "IMPORTANT: Move Ollama to port 11435:"
+        echo "  sudo systemctl edit ollama"
+        echo "  Add: Environment=\"OLLAMA_HOST=127.0.0.1:11435\""
         echo "  Then: sudo systemctl daemon-reload && sudo systemctl restart ollama"
     fi
-    echo "  Then restart Ollama."
     echo ""
     echo "  Proxy:     http://localhost:11434  (drop-in, no app changes needed)"
     if [ -n "$TRACKER_URL" ]; then

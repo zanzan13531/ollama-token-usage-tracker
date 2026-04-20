@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,15 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11435"
     proxy_port: int = 11434
     db_path: str = "~/.ollama-tracker/usage.db"
+
+    @model_validator(mode="after")
+    def _normalize_urls(self) -> "Settings":
+        """Auto-prefix http:// on URLs if missing."""
+        if self.tracker_url and not self.tracker_url.startswith(("http://", "https://")):
+            self.tracker_url = f"http://{self.tracker_url}"
+        if not self.ollama_host.startswith(("http://", "https://")):
+            self.ollama_host = f"http://{self.ollama_host}"
+        return self
 
     @property
     def resolved_db_path(self) -> Path:

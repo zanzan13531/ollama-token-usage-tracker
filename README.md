@@ -10,7 +10,7 @@ A transparent proxy that sits between your apps and Ollama to track token usage.
 - **Streaming support** — handles both streaming and non-streaming responses
 - **Web dashboard** — dark-themed UI with charts, filterable by device and model
 - **Stats API** — JSON endpoints for daily, weekly, monthly breakdowns
-- **Auto-restart** — launchd plist for macOS auto-start on reboot
+- **Auto-restart** — launchd (macOS) or systemd (Linux) for auto-start on reboot
 - **No prompt storage** — only tracks numeric metrics, never stores prompt or message content
 
 ## Architecture
@@ -40,9 +40,20 @@ Two deployment modes from the same codebase:
 
 ### 1. Move Ollama to a different port
 
+The proxy takes over port 11434, so Ollama needs to listen elsewhere.
+
+**macOS:**
 ```bash
 launchctl setenv OLLAMA_HOST "127.0.0.1:11435"
 # Restart Ollama (or reboot)
+```
+
+**Linux (systemd):**
+```bash
+sudo systemctl edit ollama
+# Add under [Service]:
+#   Environment="OLLAMA_HOST=127.0.0.1:11435"
+sudo systemctl restart ollama
 ```
 
 ### 2. Install
@@ -53,7 +64,7 @@ chmod +x install.sh
 ./install.sh
 ```
 
-The install script will prompt for mode, device name, and tracker URL.
+The install script detects your OS (macOS/Linux) and prompts for mode, device name, and tracker URL.
 
 ### 3. Use it
 
@@ -64,20 +75,20 @@ All your apps keep using `http://localhost:11434` — no changes needed.
 
 ## Multi-Device Setup
 
-### On the tracker node (no Ollama):
+### On the tracker node (no Ollama needed):
 
 ```bash
-MODE=tracker DEVICE_NAME=tracker ./install.sh
-# Or set in .env: MODE=tracker
+./install.sh
+# When prompted: Mode = tracker
 ```
 
 ### On each device with Ollama:
 
-```bash
-# Move Ollama to 11435 first
-launchctl setenv OLLAMA_HOST "127.0.0.1:11435"
+First move Ollama to port 11435 (see step 1 above), then:
 
-MODE=proxy DEVICE_NAME=mac-studio TRACKER_URL=http://tracker-node:11434 ./install.sh
+```bash
+./install.sh
+# When prompted: Mode = proxy, then enter your device name and tracker URL
 ```
 
 Each proxy saves metrics locally AND reports them to the central tracker.
@@ -112,14 +123,24 @@ Set via environment variables or `.env` file:
 
 ## Managing the Service
 
+**macOS:**
 ```bash
-# Stop the service
+# Stop / Start
 launchctl unload ~/Library/LaunchAgents/com.ollama-tracker.plist
-
-# Start the service
 launchctl load ~/Library/LaunchAgents/com.ollama-tracker.plist
 
 # View logs
 tail -f /tmp/ollama-tracker.log
 tail -f /tmp/ollama-tracker.err
+```
+
+**Linux:**
+```bash
+# Stop / Start / Restart
+sudo systemctl stop ollama-tracker
+sudo systemctl start ollama-tracker
+sudo systemctl restart ollama-tracker
+
+# View logs
+journalctl -u ollama-tracker -f
 ```
