@@ -223,6 +223,23 @@ async def query_time_stats(
         return results
 
 
+async def query_earliest_timestamp(
+    model: str | None = None, device: str | None = None,
+) -> "datetime | None":
+    """Return the earliest request timestamp, or None if no data."""
+    from datetime import datetime, timezone
+
+    async with aiosqlite.connect(_db_path()) as db:
+        where, params = _build_filters(model, device)
+        row = await db.execute_fetchall(
+            f"SELECT MIN(timestamp) FROM requests {where}", params
+        )
+        val = row[0][0] if row and row[0][0] else None
+        if val is None:
+            return None
+        return datetime.fromisoformat(val).replace(tzinfo=timezone.utc)
+
+
 async def query_devices() -> list[str]:
     async with aiosqlite.connect(_db_path()) as db:
         rows = await db.execute_fetchall(
