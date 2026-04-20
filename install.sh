@@ -114,6 +114,22 @@ if [ "$OS" = "Darwin" ]; then
         launchctl remove com.ollama.server 2>/dev/null || true
         launchctl remove com.ollama.ollama 2>/dev/null || true
 
+        # Warn user to disable Ollama's background agent in System Settings
+        OLLAMA_APP="/Applications/Ollama.app"
+        if [ -d "$OLLAMA_APP" ]; then
+            echo ""
+            echo "*** IMPORTANT: Disable Ollama background agent ***"
+            echo "  System Settings → General → Login Items → Allow in the Background"
+            echo "  Toggle OFF 'Ollama' to prevent it from grabbing port 11434 on reboot."
+            echo ""
+            read -rp "Press Enter once you've disabled it (or 's' to skip): " SKIP_OLLAMA
+        fi
+
+        # Remove any plist files the desktop app drops into LaunchAgents
+        rm -f "$HOME/Library/LaunchAgents/com.ollama.serve.plist" 2>/dev/null || true
+        rm -f "$HOME/Library/LaunchAgents/com.ollama.server.plist" 2>/dev/null || true
+        rm -f "$HOME/Library/LaunchAgents/com.ollama.ollama.plist" 2>/dev/null || true
+
         if launchctl list | grep -q "$OLLAMA_PLIST_NAME" 2>/dev/null; then
             launchctl unload "$OLLAMA_PLIST_DST" 2>/dev/null || true
         fi
@@ -167,8 +183,13 @@ echo ""
 if [ "$MODE" = "proxy" ]; then
     if [ "$OS" = "Darwin" ]; then
         echo "Ollama has been moved to port 11435 automatically."
-        echo "NOTE: Do not use the Ollama desktop app — it will fight for port 11434."
-        echo "      Ollama is now managed via launchd (com.ollama.serve.custom)."
+        echo "NOTE: Ollama is now managed via launchd (com.ollama.serve.custom)."
+        echo "      Make sure Ollama is toggled OFF under:"
+        echo "      System Settings → General → Login Items → Allow in the Background"
+        echo ""
+        echo "If after reboot Ollama grabs port 11434 again, run:"
+        echo "  kill -9 \$(lsof -ti :11434)"
+        echo "  launchctl load ~/Library/LaunchAgents/com.ollama-tracker.plist"
     else
         echo "IMPORTANT: Move Ollama to port 11435:"
         echo "  sudo systemctl edit ollama"

@@ -20,6 +20,8 @@ class Settings(BaseSettings):
         """Auto-prefix http:// on URLs if missing."""
         if self.tracker_url and not self.tracker_url.startswith(("http://", "https://")):
             self.tracker_url = f"http://{self.tracker_url}"
+        if self.tracker_url:
+            self.tracker_url = self.tracker_url.rstrip("/")
         if not self.ollama_host.startswith(("http://", "https://")):
             self.ollama_host = f"http://{self.ollama_host}"
         return self
