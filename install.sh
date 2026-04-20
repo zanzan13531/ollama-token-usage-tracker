@@ -3,12 +3,13 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
-PLIST_NAME="com.ollama-tracker"
-PLIST_SRC="$PROJECT_DIR/$PLIST_NAME.plist"
-PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
 ENV_FILE="$PROJECT_DIR/.env"
 
+# Detect OS
+OS="$(uname -s)"
+
 echo "=== Ollama Token Usage Tracker - Install ==="
+echo "Detected OS: $OS"
 echo ""
 
 # Check Python version
@@ -73,22 +74,58 @@ fi
 
 echo "DB_PATH=~/.ollama-tracker/usage.db" >> "$ENV_FILE"
 
-# Install launchd plist
-echo ""
-echo "Setting up auto-start with launchd..."
+# ── Auto-start setup (OS-specific) ──────────────────────────────────
 
-# Unload existing plist if present
-if launchctl list | grep -q "$PLIST_NAME" 2>/dev/null; then
-    launchctl unload "$PLIST_DST" 2>/dev/null || true
+echo ""
+echo "Setting up auto-start..."
+
+if [ "$OS" = "Darwin" ]; then
+    # macOS: launchd
+    PLIST_NAME="com.ollama-tracker"
+    PLIST_SRC="$PROJECT_DIR/$PLIST_NAME.plist"
+    PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME.plist"
+
+    mkdir -p "$HOME/Library/LaunchAgents"
+
+    if launchctl list | grep -q "$PLIST_NAME" 2>/dev/null; then
+        launchctl unload "$PLIST_DST" 2>/dev/null || true
+    fi
+
+    sed -e "s|__VENV_BIN__|$VENV_DIR/bin|g" \
+        -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" \
+        "$PLIST_SRC" > "$PLIST_DST"
+
+    launchctl load "$PLIST_DST"
+    echo "Loaded $PLIST_NAME into launchd"
+
+elif [ "$OS" = "Linux" ]; then
+    # Linux: systemd
+    SERVICE_NAME="ollama-tracker"
+    SERVICE_SRC="$PROJECT_DIR/$SERVICE_NAME.service"
+    SERVICE_DST="/etc/systemd/system/$SERVICE_NAME.service"
+
+    sed -e "s|__VENV_BIN__|$VENV_DIR/bin|g" \
+        -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" \
+        -e "s|__USER__|$(whoami)|g" \
+        "$SERVICE_SRC" > "/tmp/$SERVICE_NAME.service"
+
+    if command -v sudo &>/dev/null; then
+        sudo cp "/tmp/$SERVICE_NAME.service" "$SERVICE_DST"
+        sudo systemctl daemon-reload
+        sudo systemctl enable "$SERVICE_NAME"
+        sudo systemctl restart "$SERVICE_NAME"
+        echo "Enabled and started $SERVICE_NAME.service via systemd"
+    else
+        echo "sudo not available. Install the service manually:"
+        echo "  cp /tmp/$SERVICE_NAME.service $SERVICE_DST"
+        echo "  systemctl daemon-reload && systemctl enable --now $SERVICE_NAME"
+    fi
+else
+    echo "Unsupported OS: $OS. Skipping auto-start setup."
+    echo "Run manually: $VENV_DIR/bin/uvicorn app.main:app --host 0.0.0.0 --port 11434"
 fi
 
-# Template the plist with actual paths
-sed -e "s|__VENV_BIN__|$VENV_DIR/bin|g" \
-    -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" \
-    "$PLIST_SRC" > "$PLIST_DST"
-
-launchctl load "$PLIST_DST"
-echo "Loaded $PLIST_NAME into launchd"
+# ── Summary ──────────────────────────────────────────────────────────
 
 echo ""
 echo "=== Installation complete! ==="
@@ -98,7 +135,12 @@ echo ""
 
 if [ "$MODE" = "proxy" ]; then
     echo "IMPORTANT: Move Ollama to port 11435 so the proxy can take over 11434:"
-    echo "  launchctl setenv OLLAMA_HOST '127.0.0.1:11435'"
+    if [ "$OS" = "Darwin" ]; then
+        echo "  launchctl setenv OLLAMA_HOST '127.0.0.1:11435'"
+    else
+        echo "  Edit /etc/systemd/system/ollama.service and set Environment=\"OLLAMA_HOST=127.0.0.1:11435\""
+        echo "  Then: sudo systemctl daemon-reload && sudo systemctl restart ollama"
+    fi
     echo "  Then restart Ollama."
     echo ""
     echo "  Proxy:     http://localhost:11434  (drop-in, no app changes needed)"
@@ -112,5 +154,10 @@ fi
 echo "  Dashboard: http://localhost:11434/dashboard"
 echo "  Stats API: http://localhost:11434/stats"
 echo ""
-echo "Logs: /tmp/ollama-tracker.log"
-echo "      /tmp/ollama-tracker.err"
+
+if [ "$OS" = "Darwin" ]; then
+    echo "Logs: /tmp/ollama-tracker.log"
+    echo "      /tmp/ollama-tracker.err"
+elif [ "$OS" = "Linux" ]; then
+    echo "Logs: journalctl -u ollama-tracker -f"
+fi
