@@ -256,8 +256,8 @@ async function loadTimeSeries() {
       interaction: { mode: 'index', intersect: false },
       scales: {
         x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
-        y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
-        y1: { position: 'right', ticks: { color: '#58a6ff' }, grid: { drawOnChartArea: false } },
+        y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, title: { display: true, text: 'Tokens', color: '#8b949e' } },
+        y1: { position: 'right', ticks: { color: '#58a6ff' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Requests', color: '#58a6ff' } },
       },
       plugins: {
         legend: { labels: { color: '#8b949e' } }
