@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     device_name: str = "default"
     tracker_url: str | None = None  # central tracker URL (proxy mode only)
 
+    timezone: str = "America/Los_Angeles"
+
     ollama_host: str = "http://localhost:11435"
     proxy_port: int = 11434
     db_path: str = "~/.ollama-tracker/usage.db"

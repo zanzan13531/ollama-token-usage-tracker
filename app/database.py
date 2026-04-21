@@ -154,18 +154,23 @@ async def query_stats(
         return summary
 
 
-def _period_expr(bucket: str, bucket_hours: int | None = None) -> str:
+def _period_expr(
+    bucket: str, bucket_hours: int | None = None, tz_offset: str | None = None,
+) -> str:
     """Build a SQL expression for the time period grouping.
 
     When bucket_hours is set, hours are floored to the nearest multiple
     (e.g. bucket_hours=6 gives 00:00, 06:00, 12:00, 18:00).
+    When tz_offset is set (e.g. '-7 hours'), timestamps are converted from UTC
+    before bucketing.
     """
+    ts = f"datetime(timestamp, '{tz_offset}')" if tz_offset else "timestamp"
     if bucket_hours and bucket_hours > 1:
         return (
-            f"strftime('%Y-%m-%d ', timestamp) || "
-            f"printf('%02d', (CAST(strftime('%H', timestamp) AS INTEGER) / {bucket_hours}) * {bucket_hours}) || ':00'"
+            f"strftime('%Y-%m-%d ', {ts}) || "
+            f"printf('%02d', (CAST(strftime('%H', {ts}) AS INTEGER) / {bucket_hours}) * {bucket_hours}) || ':00'"
         )
-    return f"strftime('{bucket}', timestamp)"
+    return f"strftime('{bucket}', {ts})"
 
 
 async def query_time_stats(
@@ -174,14 +179,16 @@ async def query_time_stats(
     model: str | None = None,
     device: str | None = None,
     bucket_hours: int | None = None,
+    tz_offset: str | None = None,
 ) -> list[dict[str, Any]]:
     """Query stats grouped by time bucket.
 
     bucket: SQLite strftime format, e.g. '%Y-%m-%d' for daily
     lookback: SQLite date modifier, e.g. '-30 days'. None = all time.
     bucket_hours: if set, floor hours to this interval (e.g. 6 for 6-hour blocks).
+    tz_offset: SQLite modifier for timezone conversion, e.g. '-7 hours'.
     """
-    period_sql = _period_expr(bucket, bucket_hours)
+    period_sql = _period_expr(bucket, bucket_hours, tz_offset)
 
     async with aiosqlite.connect(_db_path()) as db:
         db.row_factory = aiosqlite.Row
@@ -197,7 +204,7 @@ async def query_time_stats(
         filter_sql = " ".join(extra_filters)
 
         if lookback is not None:
-            time_clause = "WHERE timestamp >= datetime('now', ?)"
+            time_clause = "WHERE timestamp >= datetime('now', ?)" if not tz_offset else f"WHERE datetime(timestamp, '{tz_offset}') >= datetime('now', '{tz_offset}', ?)"
             time_params: list[Any] = [lookback]
         else:
             time_clause = "WHERE 1=1"
