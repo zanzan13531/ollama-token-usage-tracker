@@ -215,6 +215,7 @@ async function loadTimeSeries() {
   const labels = data.map(d => d.period).reverse();
   const input = data.map(d => d.input_tokens).reverse();
   const output = data.map(d => d.output_tokens).reverse();
+  const requests = data.map(d => d.requests).reverse();
 
   if (tokenChart) tokenChart.destroy();
   tokenChart = new Chart($('tokenChart'), {
@@ -245,8 +246,9 @@ async function loadTimeSeries() {
     data: {
       labels,
       datasets: [
-        { label: 'Input Tokens', data: input, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', tension: 0.3, fill: true, pointRadius: 3, pointBackgroundColor: '#3fb950' },
-        { label: 'Output Tokens', data: output, borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.1)', tension: 0.3, fill: true, pointRadius: 3, pointBackgroundColor: '#d29922' },
+        { label: 'Input Tokens', data: input, borderColor: '#3fb950', backgroundColor: 'rgba(63,185,80,0.1)', tension: 0.3, fill: true, pointRadius: 3, pointBackgroundColor: '#3fb950', yAxisID: 'y' },
+        { label: 'Output Tokens', data: output, borderColor: '#d29922', backgroundColor: 'rgba(210,153,34,0.1)', tension: 0.3, fill: true, pointRadius: 3, pointBackgroundColor: '#d29922', yAxisID: 'y' },
+        { label: 'Requests', data: requests, borderColor: '#58a6ff', backgroundColor: 'rgba(88,166,255,0.05)', tension: 0.3, fill: true, pointRadius: 3, pointBackgroundColor: '#58a6ff', yAxisID: 'y1' },
       ]
     },
     options: {
@@ -255,6 +257,7 @@ async function loadTimeSeries() {
       scales: {
         x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
         y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+        y1: { position: 'right', ticks: { color: '#58a6ff' }, grid: { drawOnChartArea: false } },
       },
       plugins: {
         legend: { labels: { color: '#8b949e' } }
