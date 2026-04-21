@@ -168,7 +168,8 @@ async function loadDevices() {
 
 async function loadStats() {
   const q = getFilterParams();
-  const stats = await fetchJSON(`/stats${q}`);
+  const sep = q ? '&' : '?';
+  const stats = await fetchJSON(`/stats${q}${sep}period=${currentPeriod}`);
 
   $('totalRequests').textContent = fmt(stats.total_requests);
   $('totalInput').textContent = fmt(stats.total_input_tokens);
@@ -293,6 +294,7 @@ document.querySelectorAll('[data-period]').forEach(btn => {
     document.querySelectorAll('[data-period]').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     currentPeriod = btn.dataset.period;
+    loadStats();
     loadTimeSeries();
   });
 });

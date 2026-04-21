@@ -23,12 +23,22 @@ def _tz_offset() -> str:
     return f"{sign}{hours} hours"
 
 
+_PERIOD_LOOKBACK = {
+    "daily": "-1 day",
+    "weekly": "-7 days",
+    "monthly": "-30 days",
+}
+
+
 @router.get("", response_model=StatsResponse)
 async def get_stats(
     model: str | None = Query(None, description="Filter by model name"),
     device: str | None = Query(None, description="Filter by device name"),
+    period: str | None = Query(None, description="Time period: daily, weekly, monthly, lifetime"),
 ):
-    return await query_stats(model=model, device=device)
+    lookback = _PERIOD_LOOKBACK.get(period)
+    tz_offset = _tz_offset() if lookback else None
+    return await query_stats(model=model, device=device, lookback=lookback, tz_offset=tz_offset)
 
 
 @router.get("/daily", response_model=list[TimeBucketStats])

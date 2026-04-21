@@ -119,11 +119,19 @@ def _build_filters(
 
 
 async def query_stats(
-    model: str | None = None, device: str | None = None
+    model: str | None = None,
+    device: str | None = None,
+    lookback: str | None = None,
+    tz_offset: str | None = None,
 ) -> dict[str, Any]:
     async with aiosqlite.connect(_db_path()) as db:
         db.row_factory = aiosqlite.Row
         where, params = _build_filters(model, device)
+
+        if lookback:
+            offset_mod = f", '{tz_offset}'" if tz_offset else ""
+            time_clause = f"datetime(timestamp{offset_mod}) >= datetime('now'{offset_mod}, '{lookback}')"
+            where = f"{where} AND {time_clause}" if where else f"WHERE {time_clause}"
 
         row = await db.execute_fetchall(
             f"""
