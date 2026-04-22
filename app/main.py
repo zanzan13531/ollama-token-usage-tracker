@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     if settings.mode == "proxy":
         app.state.ollama_host = settings.ollama_host
         app.state.http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(300.0, connect=10.0),
+            timeout=httpx.Timeout(300.0, connect=30.0),
         )
         logger.info(
             "Proxy mode [%s] — forwarding to %s",
