@@ -1,4 +1,6 @@
 import logging
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiosqlite
@@ -181,6 +183,116 @@ def _period_expr(
     return f"strftime('{bucket}', {ts})"
 
 
+def _parse_tz_offset(tz_offset: str | None) -> timedelta:
+    """Parse a SQLite-style offset like '-7 hours' or '+5:30 hours' into a timedelta."""
+    if not tz_offset:
+        return timedelta(0)
+    m = re.match(r"([+-]?)(\d+)(?::(\d+))?\s*hours?", tz_offset)
+    if not m:
+        return timedelta(0)
+    sign = -1 if m.group(1) == "-" else 1
+    hours = int(m.group(2))
+    minutes = int(m.group(3)) if m.group(3) else 0
+    return timedelta(hours=sign * hours, minutes=sign * minutes)
+
+
+def _parse_lookback(lookback: str) -> timedelta:
+    """Parse a SQLite-style lookback like '-7 days' or '-1 day' into a timedelta."""
+    m = re.match(r"(-?\d+)\s*(days?)", lookback)
+    if m:
+        return timedelta(days=int(m.group(1)))
+    return timedelta(0)
+
+
+def _format_period(dt: datetime, bucket: str, bucket_hours: int | None) -> str:
+    """Format a datetime into a period string matching the SQL output."""
+    if bucket_hours and bucket_hours > 1:
+        floored = (dt.hour // bucket_hours) * bucket_hours
+        return dt.strftime("%Y-%m-%d ") + f"{floored:02d}:00"
+    return dt.strftime(bucket)
+
+
+def _fill_gaps(
+    results: list[dict[str, Any]],
+    bucket: str,
+    lookback: str | None,
+    bucket_hours: int | None,
+    tz_offset: str | None,
+) -> list[dict[str, Any]]:
+    """Fill missing time slots with zero-valued entries for continuous charts."""
+    offset = _parse_tz_offset(tz_offset)
+    now_local = datetime.now(timezone.utc) + offset
+
+    if lookback is not None:
+        lb = _parse_lookback(lookback)
+        start = now_local + lb
+    else:
+        if not results:
+            return []
+        periods = [r["period"] for r in results]
+        start_str, end_str = min(periods), max(periods)
+        fmt = "%Y-%m-%d %H:%M" if " " in start_str else bucket
+        if bucket == "%Y-W%W":
+            start = datetime.strptime(start_str + "-1", "%Y-W%W-%w")
+            end_parsed = datetime.strptime(end_str + "-1", "%Y-W%W-%w")
+        elif bucket == "%Y-%m":
+            start = datetime.strptime(start_str, "%Y-%m")
+            end_parsed = datetime.strptime(end_str, "%Y-%m")
+        else:
+            start = datetime.strptime(start_str, fmt)
+            end_parsed = datetime.strptime(end_str, fmt)
+        now_local = end_parsed
+
+    # Determine step size
+    if bucket_hours and bucket_hours > 1:
+        step = timedelta(hours=bucket_hours)
+        start = start.replace(hour=(start.hour // bucket_hours) * bucket_hours, minute=0, second=0, microsecond=0)
+    elif "%H" in bucket:
+        step = timedelta(hours=1)
+        start = start.replace(minute=0, second=0, microsecond=0)
+    elif bucket == "%Y-W%W":
+        step = timedelta(weeks=1)
+        start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif bucket == "%Y-%m":
+        step = None  # handled via month iteration
+        start = start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        step = timedelta(days=1)
+        start = start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # Generate all period strings
+    all_periods: list[str] = []
+    if step is not None:
+        current = start
+        while current <= now_local:
+            all_periods.append(_format_period(current, bucket, bucket_hours))
+            current += step
+    else:
+        # Monthly iteration
+        year, month = start.year, start.month
+        end_year, end_month = now_local.year, now_local.month
+        while (year, month) <= (end_year, end_month):
+            all_periods.append(f"{year:04d}-{month:02d}")
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+
+    # Merge with actual results
+    existing = {r["period"]: r for r in results}
+    zero_entry = {"requests": 0, "input_tokens": 0, "output_tokens": 0, "avg_latency_ms": 0, "models": []}
+    merged = []
+    for p in all_periods:
+        if p in existing:
+            merged.append(existing[p])
+        else:
+            merged.append({"period": p, **zero_entry})
+
+    # Return descending to match original API contract
+    merged.reverse()
+    return merged
+
+
 async def query_time_stats(
     bucket: str,
     lookback: str | None = None,
@@ -253,7 +365,7 @@ async def query_time_stats(
             )
             item["models"] = [dict(m) for m in model_rows]
 
-        return results
+        return _fill_gaps(results, bucket, lookback, bucket_hours, tz_offset)
 
 
 async def query_earliest_timestamp(
