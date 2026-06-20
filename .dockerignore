@@ -1,0 +1,16 @@
+.git
+.env
+.env.*
+!.env.example
+*.pyc
+__pycache__
+.venv
+venv
+*.db
+*.db-wal
+*.db-shm
+.mypy_cache
+.pytest_cache
+*.plist
+*.service
+install.sh

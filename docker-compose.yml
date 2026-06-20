@@ -1,0 +1,73 @@
+services:
+
+  # Proxy mode: tracker in a container, Ollama running on the host at port 11435
+  proxy:
+    build: .
+    container_name: ollama-proxy
+    ports:
+      - "11434:11434"
+    volumes:
+      - proxy-data:/data
+    environment:
+      - MODE=proxy
+      - DEVICE_NAME=${DEVICE_NAME:-default}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11435}
+      - TRACKER_URL=${TRACKER_URL:-}
+      - TIMEZONE=${TIMEZONE:-America/Los_Angeles}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    profiles:
+      - proxy
+
+  # Tracker mode: central aggregator, no Ollama needed
+  tracker:
+    build: .
+    container_name: ollama-tracker
+    ports:
+      - "11434:11434"
+    volumes:
+      - tracker-data:/data
+    environment:
+      - MODE=tracker
+      - DEVICE_NAME=${DEVICE_NAME:-tracker}
+      - TIMEZONE=${TIMEZONE:-America/Los_Angeles}
+    restart: unless-stopped
+    profiles:
+      - tracker
+
+  # Full stack: Ollama + proxy together in containers
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-server
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    profiles:
+      - full
+
+  proxy-full:
+    build: .
+    container_name: ollama-proxy-full
+    ports:
+      - "11434:11434"
+    volumes:
+      - proxy-data:/data
+    environment:
+      - MODE=proxy
+      - DEVICE_NAME=${DEVICE_NAME:-default}
+      - OLLAMA_HOST=http://ollama:11434
+      - TRACKER_URL=${TRACKER_URL:-}
+      - TIMEZONE=${TIMEZONE:-America/Los_Angeles}
+    depends_on:
+      - ollama
+    restart: unless-stopped
+    profiles:
+      - full
+
+volumes:
+  proxy-data:
+  tracker-data:
+  ollama-models:
