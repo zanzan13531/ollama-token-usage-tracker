@@ -10,7 +10,7 @@ A transparent proxy that sits between your apps and Ollama to track token usage.
 - **Streaming support** — handles both streaming and non-streaming responses
 - **Web dashboard** — dark-themed UI with charts, filterable by device and model
 - **Stats API** — JSON endpoints for daily, weekly, monthly breakdowns
-- **Auto-restart** — launchd (macOS) or systemd (Linux) for auto-start on reboot
+- **Auto-restart** — Docker, launchd (macOS), or systemd (Linux) for auto-start on reboot
 - **No prompt storage** — only tracks numeric metrics, never stores prompt or message content
 
 ## Architecture
@@ -36,11 +36,108 @@ Two deployment modes from the same codebase:
         └───────────────┘
 ```
 
-## Quick Start (Single Device)
+## Docker
+
+### Prerequisites
+
+Install Docker first:
+
+**macOS:**
+```bash
+brew install --cask docker
+# Then open Docker.app to finish setup
+```
+
+**Windows:**
+```powershell
+winget install Docker.DockerDesktop
+# Restart, then open Docker Desktop to finish setup
+```
+
+**Linux:**
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER  # log out and back in after this
+```
+
+### Run
+
+The `--build` flag builds the image on first run (or after code changes). Pick the profile that matches your setup:
+
+**Proxy mode** — proxy in a container, Ollama running on your host at port 11435:
+
+```bash
+# Move Ollama to port 11435 first (see below), then:
+docker compose --profile proxy up -d --build
+# Dashboard: http://localhost:11434/dashboard
+```
+
+**Tracker mode** — central aggregator, no Ollama needed:
+
+```bash
+docker compose --profile tracker up -d --build
+# Dashboard: http://localhost:11434/dashboard
+```
+
+**Full stack** — Ollama + proxy both in containers:
+
+```bash
+docker compose --profile full up -d --build
+# Pull a model on first run:
+docker exec -it ollama-server ollama pull llama3.2
+# Dashboard: http://localhost:11434/dashboard
+```
+
+### Configuration
+
+Copy `.env.example` to `.env` and edit before starting:
+
+```bash
+cp .env.example .env
+```
+
+Key variables for Docker:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `DEVICE_NAME` | `default` | Name shown in the dashboard |
+| `TRACKER_URL` | — | Set on proxy machines to report to a central tracker |
+| `OLLAMA_HOST` | `http://host.docker.internal:11435` | Change if Ollama is on a different host/port |
+| `TIMEZONE` | `America/Los_Angeles` | Used for stats bucketing |
+
+### Auto-restart on reboot
+
+All services use `restart: unless-stopped`, so Docker will restart containers automatically after a crash or reboot — as long as Docker itself starts on boot, which it does by default:
+
+- **Mac/Windows:** Docker Desktop starts on login (Settings → General → "Start Docker Desktop when you sign in")
+- **Linux:** the Docker daemon is registered as a systemd service automatically by the installer, so containers come back after reboot with no extra config
+
+To permanently stop a container from restarting, run `docker compose --profile <profile> down` before shutting down.
+
+### Logs & management
+
+Replace `proxy` with `tracker` or `full` depending on your profile:
+
+```bash
+# View logs (live)
+docker compose --profile proxy logs -f
+
+# Stop (containers can be restarted later with `up`)
+docker compose --profile proxy down
+
+# Stop and delete the database volume (destructive — data is gone)
+docker compose --profile proxy down -v
+```
+
+> **Linux note:** `host.docker.internal` resolves to your host automatically via `extra_hosts`. No manual IP config needed.
+
+## Native Install (non-Docker)
+
+> Use this if Docker isn't available. Otherwise the Docker section above is simpler.
 
 ### 1. Move Ollama to a different port
 
-The proxy takes over port 11434, so Ollama needs to listen elsewhere.
+The proxy takes over port 11434, so Ollama needs to listen elsewhere. Skip this step if using the Docker `full` profile (Ollama runs in its own container).
 
 **macOS:**
 ```bash
@@ -141,103 +238,9 @@ Set via environment variables or `.env` file:
 | `PROXY_PORT` | `11434` | Port for the proxy/tracker |
 | `DB_PATH` | `~/.ollama-tracker/usage.db` | SQLite database path |
 
-## Docker
+## Managing the Service (non-Docker install)
 
-### Prerequisites
-
-Install Docker first:
-
-**macOS:**
-```bash
-brew install --cask docker
-# Then open Docker.app to finish setup
-```
-
-**Windows:**
-```powershell
-winget install Docker.DockerDesktop
-# Restart, then open Docker Desktop to finish setup
-```
-
-**Linux:**
-```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER  # log out and back in after this
-```
-
-### Build the image
-
-```bash
-docker compose build
-```
-
-You only need to rebuild after pulling code changes:
-
-```bash
-docker compose build --no-cache
-```
-
-### Run
-
-Three profiles cover every deployment scenario. The `--build` flag builds the image automatically on first run if you skipped the step above.
-
-**Proxy mode** — proxy in a container, Ollama running on your host at port 11435:
-
-```bash
-# Move Ollama to port 11435 first (see Quick Start above), then:
-docker compose --profile proxy up -d --build
-# Dashboard: http://localhost:11434/dashboard
-```
-
-**Tracker mode** — central aggregator, no Ollama needed:
-
-```bash
-docker compose --profile tracker up -d --build
-# Dashboard: http://localhost:11434/dashboard
-```
-
-**Full stack** — Ollama + proxy both in containers:
-
-```bash
-docker compose --profile full up -d --build
-# Pull a model on first run:
-docker exec -it ollama-server ollama pull llama3.2
-# Dashboard: http://localhost:11434/dashboard
-```
-
-### Configuration
-
-Copy `.env.example` to `.env` and edit before starting:
-
-```bash
-cp .env.example .env
-```
-
-Key variables for Docker:
-
-| Variable | Default | Notes |
-|---|---|---|
-| `DEVICE_NAME` | `default` | Name shown in the dashboard |
-| `TRACKER_URL` | — | Set on proxy machines to report to a central tracker |
-| `OLLAMA_HOST` | `http://host.docker.internal:11435` | Change if Ollama is on a different host/port |
-| `TIMEZONE` | `America/Los_Angeles` | Used for stats bucketing |
-
-### Logs & management
-
-```bash
-# View logs
-docker compose --profile proxy logs -f
-
-# Stop
-docker compose --profile proxy down
-
-# Stop and delete the database volume (destructive)
-docker compose --profile proxy down -v
-```
-
-> **Linux note:** `host.docker.internal` resolves to your host automatically via `extra_hosts`. No manual IP config needed.
-
-## Managing the Service
+If you installed via `install.sh` instead of Docker, use the OS service manager:
 
 **macOS:**
 ```bash

@@ -7,7 +7,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - proxy-data:/data
+      - ./data:/data
     environment:
       - MODE=proxy
       - DEVICE_NAME=${DEVICE_NAME:-default}
@@ -27,7 +27,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - tracker-data:/data
+      - ./data:/data
     environment:
       - MODE=tracker
       - DEVICE_NAME=${DEVICE_NAME:-tracker}
@@ -54,7 +54,7 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - proxy-data:/data
+      - ./data:/data
     environment:
       - MODE=proxy
       - DEVICE_NAME=${DEVICE_NAME:-default}
@@ -68,6 +68,4 @@ services:
       - full
 
 volumes:
-  proxy-data:
-  tracker-data:
   ollama-models:
