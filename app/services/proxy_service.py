@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import time
@@ -37,8 +38,6 @@ async def _stream_and_track(
     tracker_client: httpx.AsyncClient | None = None,
 ) -> AsyncIterator[bytes]:
     """Yield streaming NDJSON chunks while capturing the final one for tracking."""
-    final_chunk: dict | None = None
-
     async for line in response.aiter_lines():
         yield line.encode("utf-8") + b"\n"
         stripped = line.strip()
@@ -47,17 +46,16 @@ async def _stream_and_track(
         try:
             parsed = json.loads(stripped)
             if parsed.get("done"):
-                final_chunk = parsed
+                elapsed_ms = (time.monotonic() - start_time) * 1000
+                asyncio.create_task(
+                    record_usage(
+                        parsed, request_body, endpoint, elapsed_ms,
+                        is_streaming=True, device_name=settings.device_name,
+                        tracker_client=tracker_client,
+                    )
+                )
         except (json.JSONDecodeError, ValueError):
             pass
-
-    elapsed_ms = (time.monotonic() - start_time) * 1000
-    if final_chunk:
-        await record_usage(
-            final_chunk, request_body, endpoint, elapsed_ms,
-            is_streaming=True, device_name=settings.device_name,
-            tracker_client=tracker_client,
-        )
 
 
 async def handle_tracked_request(

@@ -67,7 +67,7 @@ The `--build` flag builds the image on first run (or after code changes). Pick t
 **Proxy mode** — proxy in a container, Ollama running on your host at port 11435:
 
 ```bash
-# Move Ollama to port 11435 first (see below), then:
+# Move Ollama to port 11435 first (see "Moving Ollama to port 11435" below), then:
 docker compose --profile proxy up -d --build
 # Dashboard: http://localhost:11434/dashboard
 ```
@@ -131,27 +131,54 @@ docker compose --profile proxy down -v
 
 > **Linux note:** `host.docker.internal` resolves to your host automatically via `extra_hosts`. No manual IP config needed.
 
-## Native Install (non-Docker)
+### Moving Ollama to port 11435
 
-> Use this if Docker isn't available. Otherwise the Docker section above is simpler.
-
-### 1. Move Ollama to a different port
-
-The proxy takes over port 11434, so Ollama needs to listen elsewhere. Skip this step if using the Docker `full` profile (Ollama runs in its own container).
+The proxy takes over port 11434, so Ollama must listen on 11435 instead. This applies to both Docker `proxy` and native installs (skip for `full` profile where Ollama runs in its own container).
 
 **macOS:**
 ```bash
+# Stop the Ollama app if running (quit from menu bar)
+# Then set the port and restart:
 launchctl setenv OLLAMA_HOST "127.0.0.1:11435"
-# Restart Ollama (or reboot)
+pkill -f ollama     # kill any running ollama processes
+ollama serve &      # restart on new port (or reboot)
+
+# Verify it moved:
+lsof -i :11435     # should show ollama
+lsof -i :11434     # should NOT show ollama
 ```
+
+If the Ollama desktop app keeps grabbing port 11434 on reboot, disable its background agent:
+> System Settings → General → Login Items → Allow in the Background → toggle OFF "Ollama"
+
+Then manage Ollama via `ollama serve` or the launchd plist from `install.sh` instead.
 
 **Linux (systemd):**
 ```bash
 sudo systemctl edit ollama
-# Add under [Service]:
+# Add these lines:
+#   [Service]
 #   Environment="OLLAMA_HOST=127.0.0.1:11435"
+sudo systemctl daemon-reload
 sudo systemctl restart ollama
+
+# Verify:
+ss -tlnp | grep 11435   # should show ollama
 ```
+
+After moving Ollama, restart the Docker proxy so it can bind port 11434:
+```bash
+docker compose --profile proxy down
+docker compose --profile proxy up -d
+```
+
+## Native Install (non-Docker)
+
+> Use this if Docker isn't available. Otherwise the Docker section above is simpler.
+
+### 1. Move Ollama to port 11435
+
+Follow the steps in [Moving Ollama to port 11435](#moving-ollama-to-port-11435) above.
 
 ### 2. Install
 

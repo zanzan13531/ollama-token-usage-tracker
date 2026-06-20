@@ -32,6 +32,13 @@ async def proxy(request: Request, path: str) -> Response:
     body = None
     if request.method == "POST" and endpoint in TRACKED_ENDPOINTS:
         body = await request.json()
+        logger.info(
+            "Tracked %s request from %s — model=%s stream=%s",
+            endpoint, request.client.host if request.client else "unknown",
+            body.get("model", "?"), body.get("stream", True),
+        )
+    else:
+        logger.debug("Passthrough %s %s from %s", request.method, endpoint, request.client.host if request.client else "unknown")
 
     last_exc: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):

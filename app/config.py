@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     ollama_host: str = "http://localhost:11435"
     proxy_port: int = 11434
     db_path: str = "~/.ollama-tracker/usage.db"
+    tracker_timeout: float = 10.0
 
     @model_validator(mode="after")
     def _normalize_urls(self) -> "Settings":

@@ -24,11 +24,22 @@ async def _report_to_tracker(
 ) -> None:
     """Fire-and-forget POST to central tracker."""
     try:
-        await tracker_client.post(
+        resp = await tracker_client.post(
             f"{settings.tracker_url}/api/ingest", json=payload
         )
+        if resp.status_code >= 400:
+            logger.error(
+                "Tracker at %s returned HTTP %d: %s",
+                settings.tracker_url, resp.status_code, resp.text[:500],
+            )
+        else:
+            logger.debug("Reported to tracker at %s (HTTP %d)", settings.tracker_url, resp.status_code)
+    except httpx.ConnectError as exc:
+        logger.error("Cannot connect to tracker at %s: %s", settings.tracker_url, exc)
+    except httpx.TimeoutException as exc:
+        logger.error("Timeout reporting to tracker at %s: %s", settings.tracker_url, exc)
     except Exception:
-        logger.warning("Failed to report to tracker at %s", settings.tracker_url)
+        logger.exception("Failed to report to tracker at %s", settings.tracker_url)
 
 
 async def record_usage(

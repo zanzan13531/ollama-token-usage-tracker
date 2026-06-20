@@ -30,9 +30,9 @@ async def lifespan(app: FastAPI):
         )
         if settings.tracker_url:
             app.state.tracker_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(5.0),
+                timeout=httpx.Timeout(settings.tracker_timeout),
             )
-            logger.info("Reporting metrics to tracker at %s", settings.tracker_url)
+            logger.info("Reporting metrics to tracker at %s (timeout=%.0fs)", settings.tracker_url, settings.tracker_timeout)
     else:
         logger.info("Tracker mode — receiving metrics from device proxies")
 
