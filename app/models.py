@@ -6,6 +6,7 @@ class ModelBreakdown(BaseModel):
     requests: int
     input_tokens: int
     output_tokens: int
+    estimated_cost: float = 0
 
 
 class StatsResponse(BaseModel):
@@ -13,6 +14,7 @@ class StatsResponse(BaseModel):
     total_input_tokens: int
     total_output_tokens: int
     avg_latency_ms: float
+    total_estimated_cost: float = 0
     models: list[ModelBreakdown]
 
 
@@ -22,6 +24,7 @@ class TimeBucketStats(BaseModel):
     input_tokens: int
     output_tokens: int
     avg_latency_ms: float
+    total_estimated_cost: float = 0
     models: list[ModelBreakdown]
 
 

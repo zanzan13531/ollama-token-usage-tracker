@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.database import init_db
-from app.routes import dashboard, ingest, proxy, stats
+from app.routes import costs, dashboard, ingest, proxy, stats
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +36,12 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Tracker mode — receiving metrics from device proxies")
 
+    # Fetch OpenRouter prices in the background on startup
+    if settings.enable_cost_estimation:
+        import asyncio
+        from app.services.pricing import fetch_and_cache_prices
+        asyncio.create_task(fetch_and_cache_prices())
+
     yield
 
     if hasattr(app.state, "http_client"):
@@ -48,6 +54,7 @@ app = FastAPI(title="Ollama Token Usage Tracker", lifespan=lifespan)
 
 # Order matters: specific routes before catch-all
 app.include_router(stats.router)
+app.include_router(costs.router)
 app.include_router(dashboard.router)
 app.include_router(ingest.router)
 

@@ -75,7 +75,19 @@ async def record_usage(
             is_streaming=is_streaming,
         )
 
-        await database.insert_request(**record_kwargs)
+        row_id = await database.insert_request(**record_kwargs)
+
+        # Compute cost estimation
+        if settings.enable_cost_estimation:
+            try:
+                from app.services.pricing import compute_cost
+                await compute_cost(
+                    row_id, model,
+                    record_kwargs["prompt_eval_count"],
+                    record_kwargs["eval_count"],
+                )
+            except Exception:
+                logger.debug("Cost estimation failed for request %d", row_id, exc_info=True)
 
         # Report to central tracker if configured
         if settings.tracker_url and tracker_client:

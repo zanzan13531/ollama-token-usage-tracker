@@ -45,13 +45,38 @@ def _db_path() -> str:
     return str(settings.resolved_db_path)
 
 
+_CREATE_PRICES_TABLE = """
+CREATE TABLE IF NOT EXISTS openrouter_prices (
+    openrouter_id    TEXT PRIMARY KEY,
+    prompt_price     TEXT NOT NULL,
+    completion_price TEXT NOT NULL,
+    fetched_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now'))
+)
+"""
+
+_CREATE_MAPPINGS_TABLE = """
+CREATE TABLE IF NOT EXISTS model_mappings (
+    ollama_model     TEXT PRIMARY KEY,
+    openrouter_id    TEXT NOT NULL,
+    is_user_override INTEGER NOT NULL DEFAULT 0,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f', 'now'))
+)
+"""
+
+_COST_COLUMNS = [
+    ("estimated_prompt_cost", "REAL DEFAULT NULL"),
+    ("estimated_completion_cost", "REAL DEFAULT NULL"),
+    ("openrouter_model_id", "TEXT DEFAULT NULL"),
+]
+
+
 async def init_db() -> None:
     settings.resolved_db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(_db_path()) as db:
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute(_CREATE_TABLE)
 
-        # Migrate existing databases: add device column if missing
+        # Migrate existing databases
         cursor = await db.execute("PRAGMA table_info(requests)")
         columns = [row[1] for row in await cursor.fetchall()]
         if "device" not in columns:
@@ -59,6 +84,14 @@ async def init_db() -> None:
                 "ALTER TABLE requests ADD COLUMN device TEXT NOT NULL DEFAULT 'default'"
             )
             logger.info("Migrated database: added 'device' column")
+
+        for col_name, col_type in _COST_COLUMNS:
+            if col_name not in columns:
+                await db.execute(f"ALTER TABLE requests ADD COLUMN {col_name} {col_type}")
+                logger.info("Migrated database: added '%s' column", col_name)
+
+        await db.execute(_CREATE_PRICES_TABLE)
+        await db.execute(_CREATE_MAPPINGS_TABLE)
 
         for idx in _CREATE_INDEXES:
             await db.execute(idx)
@@ -83,9 +116,10 @@ async def insert_request(
     num_predict: int | None = None,
     response_latency_ms: float = 0,
     is_streaming: bool = True,
-) -> None:
+) -> int:
+    """Insert a request record and return its row ID."""
     async with aiosqlite.connect(_db_path()) as db:
-        await db.execute(
+        cursor = await db.execute(
             """
             INSERT INTO requests (
                 device, endpoint, model, prompt_eval_count, eval_count,
@@ -102,6 +136,7 @@ async def insert_request(
             ),
         )
         await db.commit()
+        return cursor.lastrowid
 
 
 def _build_filters(
@@ -141,7 +176,8 @@ async def query_stats(
                 COUNT(*) as total_requests,
                 COALESCE(SUM(prompt_eval_count), 0) as total_input_tokens,
                 COALESCE(SUM(eval_count), 0) as total_output_tokens,
-                COALESCE(AVG(response_latency_ms), 0) as avg_latency_ms
+                COALESCE(AVG(response_latency_ms), 0) as avg_latency_ms,
+                COALESCE(SUM(estimated_prompt_cost), 0) + COALESCE(SUM(estimated_completion_cost), 0) as total_estimated_cost
             FROM requests {where}
             """,
             params,
@@ -154,7 +190,8 @@ async def query_stats(
                 model,
                 COUNT(*) as requests,
                 COALESCE(SUM(prompt_eval_count), 0) as input_tokens,
-                COALESCE(SUM(eval_count), 0) as output_tokens
+                COALESCE(SUM(eval_count), 0) as output_tokens,
+                COALESCE(SUM(estimated_prompt_cost), 0) + COALESCE(SUM(estimated_completion_cost), 0) as estimated_cost
             FROM requests {where}
             GROUP BY model ORDER BY requests DESC
             """,
@@ -280,7 +317,7 @@ def _fill_gaps(
 
     # Merge with actual results
     existing = {r["period"]: r for r in results}
-    zero_entry = {"requests": 0, "input_tokens": 0, "output_tokens": 0, "avg_latency_ms": 0, "models": []}
+    zero_entry = {"requests": 0, "input_tokens": 0, "output_tokens": 0, "avg_latency_ms": 0, "total_estimated_cost": 0, "models": []}
     merged = []
     for p in all_periods:
         if p in existing:
@@ -337,7 +374,8 @@ async def query_time_stats(
                 COUNT(*) as requests,
                 COALESCE(SUM(prompt_eval_count), 0) as input_tokens,
                 COALESCE(SUM(eval_count), 0) as output_tokens,
-                COALESCE(AVG(response_latency_ms), 0) as avg_latency_ms
+                COALESCE(AVG(response_latency_ms), 0) as avg_latency_ms,
+                COALESCE(SUM(estimated_prompt_cost), 0) + COALESCE(SUM(estimated_completion_cost), 0) as total_estimated_cost
             FROM requests
             {time_clause}
                 {filter_sql}
@@ -355,7 +393,8 @@ async def query_time_stats(
                     model,
                     COUNT(*) as requests,
                     COALESCE(SUM(prompt_eval_count), 0) as input_tokens,
-                    COALESCE(SUM(eval_count), 0) as output_tokens
+                    COALESCE(SUM(eval_count), 0) as output_tokens,
+                    COALESCE(SUM(estimated_prompt_cost), 0) + COALESCE(SUM(estimated_completion_cost), 0) as estimated_cost
                 FROM requests
                 WHERE {period_sql} = ?
                     {filter_sql}
@@ -389,5 +428,158 @@ async def query_devices() -> list[str]:
     async with aiosqlite.connect(_db_path()) as db:
         rows = await db.execute_fetchall(
             "SELECT DISTINCT device FROM requests ORDER BY device"
+        )
+        return [row[0] for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Cost estimation helpers
+# ---------------------------------------------------------------------------
+
+async def update_request_cost(
+    request_id: int,
+    openrouter_model_id: str,
+    prompt_cost: float,
+    completion_cost: float,
+) -> None:
+    async with aiosqlite.connect(_db_path()) as db:
+        await db.execute(
+            """
+            UPDATE requests
+            SET estimated_prompt_cost = ?, estimated_completion_cost = ?, openrouter_model_id = ?
+            WHERE id = ?
+            """,
+            (prompt_cost, completion_cost, openrouter_model_id, request_id),
+        )
+        await db.commit()
+
+
+async def upsert_prices(prices: list[tuple[str, str, str]]) -> int:
+    """Upsert OpenRouter prices. Each tuple: (openrouter_id, prompt_price, completion_price)."""
+    async with aiosqlite.connect(_db_path()) as db:
+        for oid, pp, cp in prices:
+            await db.execute(
+                """
+                INSERT INTO openrouter_prices (openrouter_id, prompt_price, completion_price, fetched_at)
+                VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%f', 'now'))
+                ON CONFLICT(openrouter_id) DO UPDATE SET
+                    prompt_price = excluded.prompt_price,
+                    completion_price = excluded.completion_price,
+                    fetched_at = excluded.fetched_at
+                """,
+                (oid, pp, cp),
+            )
+        await db.commit()
+    return len(prices)
+
+
+async def get_all_prices() -> list[dict[str, Any]]:
+    async with aiosqlite.connect(_db_path()) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await db.execute_fetchall(
+            "SELECT openrouter_id, prompt_price, completion_price, fetched_at FROM openrouter_prices"
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_price_for_model(openrouter_id: str) -> tuple[str, str] | None:
+    async with aiosqlite.connect(_db_path()) as db:
+        row = await db.execute_fetchall(
+            "SELECT prompt_price, completion_price FROM openrouter_prices WHERE openrouter_id = ?",
+            (openrouter_id,),
+        )
+        if row:
+            return row[0][0], row[0][1]
+        return None
+
+
+async def get_price_age_hours() -> float | None:
+    async with aiosqlite.connect(_db_path()) as db:
+        row = await db.execute_fetchall(
+            "SELECT MIN((julianday('now') - julianday(fetched_at)) * 24) FROM openrouter_prices"
+        )
+        val = row[0][0] if row and row[0][0] is not None else None
+        return val
+
+
+async def get_mapping(ollama_model: str) -> dict[str, Any] | None:
+    async with aiosqlite.connect(_db_path()) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await db.execute_fetchall(
+            "SELECT ollama_model, openrouter_id, is_user_override FROM model_mappings WHERE ollama_model = ?",
+            (ollama_model,),
+        )
+        return dict(rows[0]) if rows else None
+
+
+async def get_all_mappings() -> list[dict[str, Any]]:
+    async with aiosqlite.connect(_db_path()) as db:
+        db.row_factory = aiosqlite.Row
+        rows = await db.execute_fetchall(
+            "SELECT ollama_model, openrouter_id, is_user_override FROM model_mappings ORDER BY ollama_model"
+        )
+        return [dict(r) for r in rows]
+
+
+async def upsert_mapping(ollama_model: str, openrouter_id: str, is_user_override: bool = False) -> None:
+    async with aiosqlite.connect(_db_path()) as db:
+        await db.execute(
+            """
+            INSERT INTO model_mappings (ollama_model, openrouter_id, is_user_override)
+            VALUES (?, ?, ?)
+            ON CONFLICT(ollama_model) DO UPDATE SET
+                openrouter_id = excluded.openrouter_id,
+                is_user_override = excluded.is_user_override
+            """,
+            (ollama_model, openrouter_id, int(is_user_override)),
+        )
+        await db.commit()
+
+
+async def delete_mapping(ollama_model: str) -> bool:
+    async with aiosqlite.connect(_db_path()) as db:
+        cursor = await db.execute(
+            "DELETE FROM model_mappings WHERE ollama_model = ? AND is_user_override = 1",
+            (ollama_model,),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def backfill_costs(
+    model: str, openrouter_id: str, prompt_price: float, completion_price: float, force: bool = False,
+) -> int:
+    """Batch-update costs for a given model. Returns number of rows updated."""
+    async with aiosqlite.connect(_db_path()) as db:
+        if force:
+            cursor = await db.execute(
+                """
+                UPDATE requests
+                SET estimated_prompt_cost = prompt_eval_count * ?,
+                    estimated_completion_cost = eval_count * ?,
+                    openrouter_model_id = ?
+                WHERE model = ?
+                """,
+                (prompt_price, completion_price, openrouter_id, model),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                UPDATE requests
+                SET estimated_prompt_cost = prompt_eval_count * ?,
+                    estimated_completion_cost = eval_count * ?,
+                    openrouter_model_id = ?
+                WHERE model = ? AND estimated_prompt_cost IS NULL
+                """,
+                (prompt_price, completion_price, openrouter_id, model),
+            )
+        await db.commit()
+        return cursor.rowcount
+
+
+async def get_distinct_models() -> list[str]:
+    async with aiosqlite.connect(_db_path()) as db:
+        rows = await db.execute_fetchall(
+            "SELECT DISTINCT model FROM requests ORDER BY model"
         )
         return [row[0] for row in rows]

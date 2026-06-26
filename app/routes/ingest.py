@@ -17,9 +17,11 @@ async def ingest_metrics(payload: IngestPayload):
     from app.config import settings
 
     db_path = str(settings.resolved_db_path)
+    inserted_rows: list[tuple[int, str, int, int]] = []
+
     async with aiosqlite.connect(db_path) as db:
         for record in payload.records:
-            await db.execute(
+            cursor = await db.execute(
                 """
                 INSERT INTO requests (
                     device, endpoint, model, prompt_eval_count, eval_count,
@@ -38,7 +40,20 @@ async def ingest_metrics(payload: IngestPayload):
                     record.response_latency_ms, int(record.is_streaming),
                 ),
             )
+            inserted_rows.append((
+                cursor.lastrowid, record.model,
+                record.prompt_eval_count, record.eval_count,
+            ))
         await db.commit()
+
+    # Compute costs for ingested records
+    if settings.enable_cost_estimation:
+        try:
+            from app.services.pricing import compute_cost
+            for row_id, model, prompt_tokens, completion_tokens in inserted_rows:
+                await compute_cost(row_id, model, prompt_tokens, completion_tokens)
+        except Exception:
+            logger.debug("Cost estimation failed during ingest", exc_info=True)
 
     logger.info("Ingested %d records", len(payload.records))
     return IngestResponse(accepted=len(payload.records))

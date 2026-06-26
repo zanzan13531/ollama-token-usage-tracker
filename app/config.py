@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     db_path: str = "~/.ollama-tracker/usage.db"
     tracker_timeout: float = 10.0
 
+    # Cost estimation
+    openrouter_api_url: str = "https://openrouter.ai/api/v1/models"
+    price_cache_ttl_hours: float = 24.0
+    enable_cost_estimation: bool = True
+
     @model_validator(mode="after")
     def _normalize_urls(self) -> "Settings":
         """Auto-prefix http:// on URLs if missing."""

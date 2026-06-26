@@ -55,6 +55,31 @@
 
   .num { font-variant-numeric: tabular-nums; }
 
+  .collapsible-header {
+    cursor: pointer; display: flex; align-items: center; gap: 8px;
+    user-select: none; color: var(--text-muted); font-size: 0.9rem; margin-bottom: 12px;
+  }
+  .collapsible-header .arrow { transition: transform 0.2s; }
+  .collapsible-header.open .arrow { transform: rotate(90deg); }
+  .collapsible-body { display: none; }
+  .collapsible-body.open { display: block; }
+
+  .mgmt-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 8px; }
+  .mgmt-table th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 8px; border-bottom: 1px solid var(--border); }
+  .mgmt-table td { padding: 8px; border-bottom: 1px solid var(--border); }
+  .mgmt-table .unmatched { color: var(--orange); }
+  .mgmt-table select, .mgmt-table input[type="text"] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    padding: 4px 8px; border-radius: 4px; font-size: 0.82rem; width: 100%;
+  }
+  .btn-sm {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 14px; border-radius: 6px; font-size: 0.82rem; cursor: pointer;
+  }
+  .btn-sm:hover { border-color: var(--accent); }
+  .btn-sm.primary { background: var(--accent); color: #000; border-color: var(--accent); }
+  .status-msg { font-size: 0.82rem; color: var(--text-muted); margin-left: 12px; }
+
   @media (max-width: 768px) {
     .charts { grid-template-columns: 1fr; }
     body { padding: 12px; }
@@ -96,6 +121,10 @@
     <div class="label">Avg Latency</div>
     <div class="value purple" id="avgLatency">—</div>
   </div>
+  <div class="card">
+    <div class="label">Estimated Cost</div>
+    <div class="value orange" id="totalCost">—</div>
+  </div>
 </div>
 
 <div class="charts">
@@ -114,6 +143,11 @@
   <canvas id="trendChart"></canvas>
 </div>
 
+<div class="chart-box" style="margin-bottom: 24px;">
+  <h3>Estimated Cost Over Time</h3>
+  <canvas id="costChart"></canvas>
+</div>
+
 <div class="table-box">
   <h3 id="tableTitle">Daily Breakdown</h3>
   <table>
@@ -124,17 +158,44 @@
         <th>Input Tokens</th>
         <th>Output Tokens</th>
         <th>Avg Latency</th>
+        <th>Est. Cost</th>
       </tr>
     </thead>
     <tbody id="statsBody"></tbody>
   </table>
 </div>
 
+<div class="table-box" style="margin-top: 24px;">
+  <div class="collapsible-header" id="mgmtToggle">
+    <span class="arrow">&#9654;</span> Price Settings &amp; Model Mappings
+  </div>
+  <div class="collapsible-body" id="mgmtBody">
+    <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;">
+      <button class="btn-sm" id="btnRefreshPrices">Refresh Prices</button>
+      <button class="btn-sm primary" id="btnBackfill">Backfill Costs</button>
+      <button class="btn-sm" id="btnForceBackfill">Force Backfill (all)</button>
+      <span class="status-msg" id="mgmtStatus"></span>
+    </div>
+    <table class="mgmt-table">
+      <thead>
+        <tr>
+          <th>Ollama Model</th>
+          <th>OpenRouter Mapping</th>
+          <th>Type</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="mappingsBody"></tbody>
+    </table>
+  </div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 const fmt = n => n != null ? n.toLocaleString() : '—';
+const fmtCost = n => n != null && n > 0 ? '$' + n.toFixed(6) : '—';
 
-let tokenChart, modelChart, trendChart;
+let tokenChart, modelChart, trendChart, costChart;
 let currentPeriod = 'daily';
 
 const CHART_COLORS = ['#58a6ff','#3fb950','#d29922','#bc8cff','#f778ba','#ff7b72','#79c0ff','#d2a8ff'];
@@ -175,6 +236,7 @@ async function loadStats() {
   $('totalInput').textContent = fmt(stats.total_input_tokens);
   $('totalOutput').textContent = fmt(stats.total_output_tokens);
   $('avgLatency').textContent = stats.avg_latency_ms ? `${stats.avg_latency_ms.toFixed(0)}ms` : '—';
+  $('totalCost').textContent = stats.total_estimated_cost > 0 ? '$' + stats.total_estimated_cost.toFixed(4) : '—';
 
   // Model doughnut
   if (modelChart) modelChart.destroy();
@@ -266,6 +328,32 @@ async function loadTimeSeries() {
     }
   });
 
+  // Cost chart
+  const costData = data.map(d => d.total_estimated_cost || 0).reverse();
+  if (costChart) costChart.destroy();
+  costChart = new Chart($('costChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Estimated Cost ($)',
+        data: costData,
+        backgroundColor: '#d29922',
+      }]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+        y: { ticks: { color: '#8b949e', callback: v => '$' + v.toFixed(4) }, grid: { color: '#21262d' } },
+      },
+      plugins: {
+        legend: { labels: { color: '#8b949e' } },
+        tooltip: { callbacks: { label: ctx => '$' + ctx.parsed.y.toFixed(6) } }
+      }
+    }
+  });
+
   // Table
   const periodLabels = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', lifetime: 'Lifetime' };
   $('tableTitle').textContent = `${periodLabels[currentPeriod]} Breakdown`;
@@ -279,6 +367,7 @@ async function loadTimeSeries() {
       <td class="num">${fmt(row.input_tokens)}</td>
       <td class="num">${fmt(row.output_tokens)}</td>
       <td class="num">${row.avg_latency_ms ? row.avg_latency_ms.toFixed(0) + 'ms' : '—'}</td>
+      <td class="num">${fmtCost(row.total_estimated_cost)}</td>
     `;
     tbody.appendChild(tr);
   }
@@ -308,6 +397,131 @@ refresh();
 
 // Auto-refresh every 30 seconds
 setInterval(refresh, 30000);
+
+// ---------------------------------------------------------------------------
+// Price management section
+// ---------------------------------------------------------------------------
+
+$('mgmtToggle').addEventListener('click', () => {
+  $('mgmtToggle').classList.toggle('open');
+  $('mgmtBody').classList.toggle('open');
+  if ($('mgmtBody').classList.contains('open')) loadMappings();
+});
+
+async function loadMappings() {
+  const [mappings, prices, ollamaData] = await Promise.all([
+    fetchJSON('/costs/mappings'),
+    fetchJSON('/costs/prices'),
+    fetchJSON('/costs/models'),
+  ]);
+
+  // Build a set of available OpenRouter model IDs for the dropdown
+  const orModels = prices.map(p => p.openrouter_id).sort();
+
+  // Find unmatched Ollama models
+  const mappedSet = new Set(mappings.map(m => m.ollama_model));
+  const allOllamaModels = ollamaData.models || [];
+
+  const tbody = $('mappingsBody');
+  tbody.innerHTML = '';
+
+  for (const m of mappings) {
+    const tr = document.createElement('tr');
+    const isOverride = m.is_user_override;
+    tr.innerHTML = `
+      <td>${m.ollama_model}</td>
+      <td>
+        <input type="text" value="${m.openrouter_id}" data-model="${m.ollama_model}" class="mapping-input" list="or-models" />
+      </td>
+      <td>${isOverride ? 'User override' : 'Auto-matched'}</td>
+      <td>
+        <button class="btn-sm save-mapping" data-model="${m.ollama_model}">Save</button>
+        ${isOverride ? `<button class="btn-sm del-mapping" data-model="${m.ollama_model}">Reset</button>` : ''}
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // Show unmatched models
+  for (const model of allOllamaModels) {
+    if (mappedSet.has(model)) continue;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="unmatched">${model}</td>
+      <td>
+        <input type="text" value="" data-model="${model}" class="mapping-input" list="or-models" placeholder="Select OpenRouter model..." />
+      </td>
+      <td class="unmatched">Unmatched</td>
+      <td>
+        <button class="btn-sm save-mapping" data-model="${model}">Save</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  // Add datalist for autocomplete
+  let datalist = document.getElementById('or-models');
+  if (!datalist) {
+    datalist = document.createElement('datalist');
+    datalist.id = 'or-models';
+    document.body.appendChild(datalist);
+  }
+  datalist.innerHTML = orModels.map(id => `<option value="${id}">`).join('');
+
+  // Bind save/delete handlers
+  tbody.querySelectorAll('.save-mapping').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const model = btn.dataset.model;
+      const input = tbody.querySelector(`input[data-model="${model}"]`);
+      const orId = input.value.trim();
+      if (!orId) return;
+      await fetch(`/costs/mappings/${encodeURIComponent(model)}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ openrouter_id: orId }),
+      });
+      setStatus('Mapping saved for ' + model);
+      loadMappings();
+    });
+  });
+
+  tbody.querySelectorAll('.del-mapping').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const model = btn.dataset.model;
+      await fetch(`/costs/mappings/${encodeURIComponent(model)}`, { method: 'DELETE' });
+      setStatus('Override removed for ' + model);
+      loadMappings();
+    });
+  });
+}
+
+function setStatus(msg) {
+  $('mgmtStatus').textContent = msg;
+  setTimeout(() => { $('mgmtStatus').textContent = ''; }, 5000);
+}
+
+$('btnRefreshPrices').addEventListener('click', async () => {
+  setStatus('Refreshing prices...');
+  const res = await fetch('/costs/prices/refresh', { method: 'POST' });
+  const data = await res.json();
+  if (data.status === 'ok') setStatus(`Cached ${data.cached} model prices`);
+  else setStatus('Failed to refresh prices');
+});
+
+$('btnBackfill').addEventListener('click', async () => {
+  setStatus('Running backfill...');
+  const res = await fetch('/costs/backfill', { method: 'POST' });
+  const data = await res.json();
+  setStatus(`Backfill done: ${data.updated} rows updated, ${data.unmatched_models.length} unmatched`);
+  refresh();
+});
+
+$('btnForceBackfill').addEventListener('click', async () => {
+  setStatus('Running force backfill...');
+  const res = await fetch('/costs/backfill?force=true', { method: 'POST' });
+  const data = await res.json();
+  setStatus(`Force backfill done: ${data.updated} rows updated, ${data.unmatched_models.length} unmatched`);
+  refresh();
+});
 </script>
 
 </body>
